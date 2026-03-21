@@ -146,6 +146,7 @@ func NewHandler(cfg *config.Config, logger *slog.Logger, deps *HandlerDeps) (htt
 
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
+	router.Use(middleware.SecurityHeaders)
 	router.Use(middleware.Metrics(gm, knownServices))
 	router.Use(middleware.Recovery(logger))
 	router.Use(middleware.Logging(logger))

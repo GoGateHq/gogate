@@ -1,0 +1,82 @@
+# GoGate — Single-Tenant Configuration Example
+#
+# Use this config when your application serves a single organisation.
+# Tenant resolution is disabled; JWT auth protects routes as needed.
+#
+# Quick start:
+#   GOGATE_CONFIG=examples/single-tenant.yaml go run ./cmd/gateway
+
+server:
+  port: 8080
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 120s
+  trusted_proxies:
+    - 127.0.0.0/8
+    - ::1/128
+
+jwt:
+  issuer: my-app
+  algorithms:
+    - HS256                        # Symmetric — the same secret signs and verifies.
+  # SECURITY: HS256 requires the signing key to be shared between the auth
+  # service and this gateway. Keep it secret, rotate regularly, and use a
+  # minimum 32-byte value. For zero-trust setups consider RS256/ES256 + JWKS.
+  clock_skew: 30s
+  keys:
+    - kid: primary
+      kty: oct
+      value: ${JWT_SIGNING_KEY}    # export JWT_SIGNING_KEY=<your-32+-char-secret>
+      primary: true
+
+cors:
+  allowed_origins:
+    - http://localhost:3000        # Local frontend dev server
+  allow_credentials: true
+
+# IMPORTANT: In production, REDIS_PASSWORD must be set to enable Redis AUTH.
+# Leaving it empty allows unauthenticated access to rate-limit state.
+redis:
+  addr: ${REDIS_ADDR:-localhost:6379}
+  password: ${REDIS_PASSWORD}            # No default — requires env var in production
+  db: 0
+
+rate_limit:
+  default_rpm: 120
+  fail_open: true
+  key_prefix: "myapp:rl:"
+
+# NOTE: In production, restrict access to /metrics via network policy or
+# an ingress rule. Do not expose it on public-facing load balancers.
+metrics:
+  enabled: true
+  path: /metrics
+
+services:
+  # Public routes (no auth required)
+  - name: auth
+    prefix: /api/v1/auth
+    target: http://localhost:8081
+    skip_auth: true
+    tenant_aware: false
+    timeout: 10s
+    max_body_size: 65536                # 64 KiB — auth payloads are small
+    rate_limit_rpm: 30                  # Low limit to deter brute-force
+
+  # Protected routes (JWT required)
+  - name: users
+    prefix: /api/v1/users
+    target: http://localhost:8082
+    skip_auth: false
+    tenant_aware: false
+    timeout: 15s
+    max_body_size: 1048576          # 1 MiB
+
+  - name: billing
+    prefix: /api/v1/billing
+    target: http://localhost:8083
+    skip_auth: false
+    tenant_aware: false
+    timeout: 30s
+    max_body_size: 1048576              # 1 MiB — invoices/receipts
+    rate_limit_rpm: 30                  # Stricter limit for billing endpoints

@@ -4,8 +4,11 @@
 package middleware
 
 import (
+	"bufio"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 
 	"github.com/gogatehq/gogate/pkg/response"
@@ -31,6 +34,24 @@ func (rw *recoveryWriter) Write(b []byte) (int, error) {
 // Unwrap lets http.ResponseController find Flusher/Hijacker on the inner writer.
 func (rw *recoveryWriter) Unwrap() http.ResponseWriter {
 	return rw.ResponseWriter
+}
+
+// Flush implements http.Flusher so SSE and chunked responses work.
+func (rw *recoveryWriter) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Hijack implements http.Hijacker so WebSocket upgrades work.
+// Setting written = true prevents the recovery handler from attempting to
+// write a 500 response on a hijacked (taken-over) connection.
+func (rw *recoveryWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := rw.ResponseWriter.(http.Hijacker); ok {
+		rw.written = true
+		return h.Hijack()
+	}
+	return nil, nil, errors.New("hijack not supported")
 }
 
 func Recovery(logger *slog.Logger) func(http.Handler) http.Handler {

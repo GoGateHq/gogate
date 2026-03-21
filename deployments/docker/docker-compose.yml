@@ -1,0 +1,53 @@
+# GoGate — Local Development Stack
+#
+# Usage:
+#   cd deployments/docker
+#   docker compose up --build
+#
+# This brings up the gateway with Redis and Prometheus for local development.
+# Mount your own config.yaml or use the provided example configs.
+
+services:
+  gateway:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../../config.yaml:/etc/gogate/config.yaml:ro
+    environment:
+      GOGATE_CONFIG: /etc/gogate/config.yaml
+      REDIS_ADDR: redis:6379
+      # REQUIRED for auth-protected routes. The gateway will refuse to start
+      # if JWT keys are configured but the env var is empty/missing.
+      # JWT_SIGNING_KEY: <set-a-32+-char-secret-here>
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=10M
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 64mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - gateway
+    restart: unless-stopped

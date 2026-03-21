@@ -1,0 +1,141 @@
+# GoGate — Kubernetes Deployment Manifests
+#
+# Usage:
+#   kubectl apply -f deployments/k8s/gateway.yaml
+#
+# Prerequisites:
+#   1. Create the config secret:
+#      kubectl create configmap gogate-config --from-file=config.yaml=config.yaml
+#   2. Create the secrets:
+#      kubectl create secret generic gogate-secrets \
+#        --from-literal=JWT_SIGNING_KEY=<your-key> \
+#        --from-literal=REDIS_PASSWORD=<your-password>
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gogate
+  labels:
+    app: gogate
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: gogate
+  template:
+    metadata:
+      labels:
+        app: gogate
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+      containers:
+        - name: gogate
+          image: gogate:v0.1.0    # Pin to a release tag or commit SHA; avoid :latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: GOGATE_CONFIG
+              value: /etc/gogate/config.yaml
+            - name: JWT_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: gogate-secrets
+                  key: JWT_SIGNING_KEY
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gogate-secrets
+                  key: REDIS_PASSWORD
+                  optional: true
+          volumeMounts:
+            - name: config
+              mountPath: /etc/gogate
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: config
+          configMap:
+            name: gogate-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gogate
+  labels:
+    app: gogate
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+  selector:
+    app: gogate
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gogate
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gogate
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80

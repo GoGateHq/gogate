@@ -4,6 +4,9 @@
 package middleware
 
 import (
+	"bufio"
+	"errors"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -67,4 +70,19 @@ func (m *metricsRecorder) Write(b []byte) (int, error) {
 
 func (m *metricsRecorder) Unwrap() http.ResponseWriter {
 	return m.ResponseWriter
+}
+
+// Flush implements http.Flusher so SSE and chunked responses work.
+func (m *metricsRecorder) Flush() {
+	if f, ok := m.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Hijack implements http.Hijacker so WebSocket upgrades work.
+func (m *metricsRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := m.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, errors.New("hijack not supported")
 }

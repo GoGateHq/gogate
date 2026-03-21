@@ -18,6 +18,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/golang-jwt/jwt/v5"
+	"nhooyr.io/websocket"
 
 	"github.com/gogatehq/gogate/internal/config"
 	"github.com/gogatehq/gogate/internal/gateway"
@@ -409,6 +410,111 @@ func TestGatewayRateLimitsAndReturns429(t *testing.T) {
 	}
 	if resp.Header.Get("X-RateLimit-Remaining") != "0" {
 		t.Fatalf("expected X-RateLimit-Remaining 0, got %q", resp.Header.Get("X-RateLimit-Remaining"))
+	}
+}
+
+func TestGatewaySecurityHeadersPresent(t *testing.T) {
+	t.Parallel()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(backend.Close)
+
+	handler := mustBuildHandler(t, &config.Config{
+		Server: config.ServerConfig{Port: 8080},
+		Services: []config.ServiceConfig{
+			{Name: "api", Prefix: "/api", Target: backend.URL, SkipAuth: boolPtr(true)},
+		},
+	})
+
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	resp := mustDo(t, server.URL+"/api/test")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	expectations := map[string]string{
+		"X-Content-Type-Options": "nosniff",
+		"X-Frame-Options":       "DENY",
+		"X-XSS-Protection":      "0",
+		"Referrer-Policy":       "strict-origin-when-cross-origin",
+	}
+	for header, expected := range expectations {
+		if got := resp.Header.Get(header); got != expected {
+			t.Errorf("expected %s=%q, got %q", header, expected, got)
+		}
+	}
+
+	// Security headers should also be present on system endpoints.
+	healthResp := mustDo(t, server.URL+"/health")
+	if healthResp.Header.Get("X-Content-Type-Options") != "nosniff" {
+		t.Error("expected security headers on /health")
+	}
+}
+
+func TestGatewayWebSocketUpgradeProxy(t *testing.T) {
+	t.Parallel()
+
+	// Backend that accepts WebSocket upgrades and echoes messages back.
+	wsBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+			InsecureSkipVerify: true,
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "done")
+
+		ctx := r.Context()
+		for {
+			msgType, data, err := conn.Read(ctx)
+			if err != nil {
+				return
+			}
+			if err := conn.Write(ctx, msgType, data); err != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(wsBackend.Close)
+
+	handler := mustBuildHandler(t, &config.Config{
+		Server: config.ServerConfig{Port: 8080},
+		Services: []config.ServiceConfig{
+			{Name: "ws", Prefix: "/ws", Target: wsBackend.URL, SkipAuth: boolPtr(true)},
+		},
+	})
+
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	// Connect via WebSocket through the gateway.
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws/echo"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("websocket dial through gateway: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "done")
+
+	// Send a message and verify it echoes back.
+	testMsg := "hello from gogate"
+	if err := conn.Write(ctx, websocket.MessageText, []byte(testMsg)); err != nil {
+		t.Fatalf("websocket write: %v", err)
+	}
+
+	_, data, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("websocket read: %v", err)
+	}
+	if string(data) != testMsg {
+		t.Fatalf("expected echo %q, got %q", testMsg, string(data))
 	}
 }
 
