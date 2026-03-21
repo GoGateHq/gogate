@@ -1,3 +1,2 @@
-# Replace this with your GitHub username or org team before making repo public.
-* @YOUR_GITHUB_USERNAME
-
+# Set CODEOWNERS to the primary maintainer account and/or maintainers team.
+* @GoGateHq/maintainers

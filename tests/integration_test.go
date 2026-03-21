@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opportunation/api-gateway/internal/config"
-	"github.com/opportunation/api-gateway/internal/gateway"
+	"github.com/gogatehq/gogate/internal/config"
+	"github.com/gogatehq/gogate/internal/gateway"
 )
 
 func TestGatewayRoutesByPrefixAndReturnsStructured404(t *testing.T) {

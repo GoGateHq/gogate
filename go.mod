@@ -1,4 +1,4 @@
-module github.com/opportunation/api-gateway
+module github.com/gogatehq/gogate
 
 go 1.22
 

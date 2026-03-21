@@ -20,5 +20,4 @@ We are committed to a respectful, harassment-free community for everyone.
 
 Project maintainers may remove comments, reject contributions, or ban participants for violations.
 
-Report conduct issues to: `gogate@youremail.com`
-
+Report conduct issues to: `support@gogatehq.dev`

@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/opportunation/api-gateway/pkg/contextkeys"
+	"github.com/gogatehq/gogate/pkg/contextkeys"
 )
 
 const requestIDHeader = "X-Request-ID"

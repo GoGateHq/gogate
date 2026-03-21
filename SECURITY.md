@@ -10,7 +10,7 @@ Do not open public issues for sensitive vulnerabilities.
 
 Preferred: submit a private GitHub Security Advisory draft in this repository.
 
-Fallback email: `gogate@youremail.com`
+Fallback email: `support@gogatehq.dev`
 
 Please include:
 

@@ -17,5 +17,4 @@
 
 You may not market a hosted offering as the official GoGate service without written permission.
 
-Contact trademark requests: `gogate@youremail.com`
-
+Contact trademark requests: `support@gogatehq.dev`

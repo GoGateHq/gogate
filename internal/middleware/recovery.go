@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/opportunation/api-gateway/pkg/response"
+	"github.com/gogatehq/gogate/pkg/response"
 )
 
 func Recovery(logger *slog.Logger) func(http.Handler) http.Handler {

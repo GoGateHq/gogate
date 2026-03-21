@@ -15,10 +15,9 @@ A commercial license is required when you want to use GoGate without AGPLv3 obli
 
 ## Contact
 
-For commercial terms, contact: `gogate@youremail.com`
+For commercial terms, contact: `support@gogatehq.dev`
 
 ## Note
 
 This file is an informational summary and does not itself grant rights.
 All legal rights and obligations are defined by a signed commercial agreement and/or `LICENSE`.
-

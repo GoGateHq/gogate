@@ -67,11 +67,11 @@ Confirm the following files exist in default branch root:
 
 ## 7. Required Placeholder Replacements
 
-Before public launch, replace:
+Before public launch, verify:
 
-- `@YOUR_GITHUB_USERNAME` in `.github/CODEOWNERS`
-- `YOUR_GITHUB_USERNAME` in `.github/ISSUE_TEMPLATE/config.yml`
-- contact emails (`gogate@youremail.com`) in policy/license files
+- `.github/CODEOWNERS` points to your active maintainer account/team
+- `.github/ISSUE_TEMPLATE/config.yml` points to your live security advisory URL
+- policy/license contact emails are reachable (`support@gogatehq.dev`)
 
 ## 8. Release Hygiene
 
@@ -88,4 +88,3 @@ git branch -M main
 git remote add origin <your-repo-url>
 git push -u origin main
 ```
-

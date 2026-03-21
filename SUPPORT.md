@@ -11,4 +11,4 @@ Community support is provided on a best-effort basis through issues and discussi
 
 Priority support, architecture review, and SLA-backed assistance are available under commercial terms.
 
-Contact: `gogate@youremail.com`
+Contact: `support@gogatehq.dev`

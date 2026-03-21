@@ -55,7 +55,7 @@ GoGate uses a dual-license model.
 - Community use is licensed under **GNU AGPLv3**. See [LICENSE](./LICENSE).
 - Commercial use without AGPL obligations requires a separate license. See [LICENSE-COMMERCIAL.md](./LICENSE-COMMERCIAL.md).
 
-Contact: `gogate@youremail.com` (replace with your real project contact email before public launch)
+Contact: `support@gogatehq.dev`
 
 ## Contribution and Governance
 
