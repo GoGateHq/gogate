@@ -1,0 +1,23 @@
+# Binaries
+bin/
+gateway
+
+# Go artifacts
+*.test
+*.out
+coverage.out
+cover.out
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# IDE / editor
+.idea/
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+

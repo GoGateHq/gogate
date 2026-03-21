@@ -1,0 +1,6 @@
+* text=auto eol=lf
+
+# Keep licenses/docs as text with consistent line endings
+*.md text eol=lf
+LICENSE text eol=lf
+
