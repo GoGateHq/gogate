@@ -16,10 +16,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/gogatehq/gogate/internal/config"
 	"github.com/gogatehq/gogate/internal/gateway"
+	"github.com/gogatehq/gogate/internal/ratelimit"
 )
 
 func TestGatewayRoutesByPrefixAndReturnsStructured404(t *testing.T) {
@@ -40,8 +42,8 @@ func TestGatewayRoutesByPrefixAndReturnsStructured404(t *testing.T) {
 	handler := mustBuildHandler(t, &config.Config{
 		Server: config.ServerConfig{Port: 8080},
 		Services: []config.ServiceConfig{
-			{Name: "auth", Prefix: "/api/v1/auth", Target: authBackend.URL},
-			{Name: "school", Prefix: "/api/v1/schools", Target: schoolBackend.URL},
+			{Name: "auth", Prefix: "/api/v1/auth", Target: authBackend.URL, SkipAuth: boolPtr(true)},
+			{Name: "school", Prefix: "/api/v1/schools", Target: schoolBackend.URL, SkipAuth: boolPtr(true)},
 		},
 	})
 
@@ -94,7 +96,7 @@ func TestGatewayInjectsRequestIDAndForwardsIt(t *testing.T) {
 	handler := mustBuildHandler(t, &config.Config{
 		Server: config.ServerConfig{Port: 8080},
 		Services: []config.ServiceConfig{
-			{Name: "auth", Prefix: "/api/v1/auth", Target: backend.URL},
+			{Name: "auth", Prefix: "/api/v1/auth", Target: backend.URL, SkipAuth: boolPtr(true)},
 		},
 	})
 
@@ -352,11 +354,69 @@ func TestGatewayStripsSpoofedHeadersAndInjectsCanonicalValues(t *testing.T) {
 	}
 }
 
+func TestGatewayRateLimitsAndReturns429(t *testing.T) {
+	t.Parallel()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(backend.Close)
+
+	mr := miniredis.RunT(t)
+	rpm := 3
+	limiter, err := ratelimit.NewLimiter(
+		config.RedisConfig{Addr: mr.Addr(), DialTimeout: 2 * time.Second, ReadTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second},
+		config.RateLimitConfig{DefaultRPM: rpm, KeyPrefix: "test:rl:"},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	if err != nil {
+		t.Fatalf("new limiter: %v", err)
+	}
+	t.Cleanup(func() { limiter.Close() })
+
+	cfg := &config.Config{
+		Server:    config.ServerConfig{Port: 8080},
+		RateLimit: config.RateLimitConfig{DefaultRPM: rpm, KeyPrefix: "test:rl:"},
+		Services: []config.ServiceConfig{
+			{Name: "api", Prefix: "/api", Target: backend.URL, SkipAuth: boolPtr(true)},
+		},
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	handler, err := gateway.NewHandler(cfg, logger, &gateway.HandlerDeps{Limiter: limiter})
+	if err != nil {
+		t.Fatalf("build handler: %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	// First 3 requests should succeed.
+	for i := 0; i < rpm; i++ {
+		resp := mustDo(t, server.URL+"/api/test")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("request %d: expected 200, got %d", i+1, resp.StatusCode)
+		}
+		if resp.Header.Get("X-RateLimit-Limit") == "" {
+			t.Fatalf("request %d: missing X-RateLimit-Limit header", i+1)
+		}
+	}
+
+	// 4th request should be rate limited.
+	resp := mustDo(t, server.URL+"/api/test")
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d", resp.StatusCode)
+	}
+	if resp.Header.Get("X-RateLimit-Remaining") != "0" {
+		t.Fatalf("expected X-RateLimit-Remaining 0, got %q", resp.Header.Get("X-RateLimit-Remaining"))
+	}
+}
+
 func mustBuildHandler(t *testing.T, cfg *config.Config) http.Handler {
 	t.Helper()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	handler, err := gateway.NewHandler(cfg, logger)
+	handler, err := gateway.NewHandler(cfg, logger, nil)
 	if err != nil {
 		t.Fatalf("build handler: %v", err)
 	}

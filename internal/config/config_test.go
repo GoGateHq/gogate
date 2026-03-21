@@ -20,6 +20,7 @@ services:
   - name: auth
     prefix: /api/v1/auth
     target: http://localhost:8081
+    skip_auth: true
 `)
 
 	cfg, err := Load(path)
@@ -32,6 +33,9 @@ services:
 	}
 	if len(cfg.Services) != 1 {
 		t.Fatalf("expected 1 service, got %d", len(cfg.Services))
+	}
+	if !cfg.Services[0].IsAuthSkipped() {
+		t.Fatal("expected skip_auth to be parsed as true")
 	}
 }
 

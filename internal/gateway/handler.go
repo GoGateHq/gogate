@@ -16,21 +16,38 @@ import (
 	"strings"
 	"time"
 
+	"fmt"
+	"strconv"
+
 	"github.com/go-chi/chi/v5"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/gogatehq/gogate/internal/auth"
 	"github.com/gogatehq/gogate/internal/config"
+	"github.com/gogatehq/gogate/internal/metrics"
 	"github.com/gogatehq/gogate/internal/middleware"
+	"github.com/gogatehq/gogate/internal/ratelimit"
 	"github.com/gogatehq/gogate/internal/tenant"
 	"github.com/gogatehq/gogate/pkg/response"
 )
 
+// HandlerDeps holds optional dependencies for the gateway handler.
+type HandlerDeps struct {
+	Limiter  *ratelimit.Limiter
+	Metrics  *metrics.Gateway
+	Registry *prometheus.Registry
+}
+
 type routeProxy struct {
-	name        string
-	prefix      string
-	proxy       *httputil.ReverseProxy
-	skipAuth    bool
-	tenantAware bool
+	name         string
+	prefix       string
+	proxy        *httputil.ReverseProxy
+	skipAuth     bool
+	tenantAware  bool
+	timeout      time.Duration
+	maxBodySize  int64
+	rateLimitRPM int
 }
 
 type healthBody struct {
@@ -38,9 +55,12 @@ type healthBody struct {
 	Service string `json:"service"`
 }
 
-func NewHandler(cfg *config.Config, logger *slog.Logger) (http.Handler, error) {
+func NewHandler(cfg *config.Config, logger *slog.Logger, deps *HandlerDeps) (http.Handler, error) {
 	if logger == nil {
 		logger = slog.Default()
+	}
+	if deps == nil {
+		deps = &HandlerDeps{}
 	}
 
 	authVerifier := auth.NewVerifier(cfg.JWT)
@@ -49,28 +69,34 @@ func NewHandler(cfg *config.Config, logger *slog.Logger) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	limiter := deps.Limiter
+	gm := deps.Metrics
+
+	sharedTransport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		Proxy:               http.ProxyFromEnvironment,
+		MaxIdleConns:        200,
+		MaxIdleConnsPerHost: 64,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+	}
 
 	routes := make([]routeProxy, 0, len(cfg.Services))
+	targetHosts := make([]string, 0, len(cfg.Services))
 	for _, svc := range cfg.Services {
 		targetURL, err := url.Parse(svc.Target)
 		if err != nil {
 			return nil, err
 		}
+		targetHosts = append(targetHosts, hostWithPort(targetURL))
 
 		proxy := httputil.NewSingleHostReverseProxy(targetURL)
-		proxy.Transport = &http.Transport{
-			DialContext: (&net.Dialer{
-				Timeout:   5 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-			Proxy:                 http.ProxyFromEnvironment,
-			MaxIdleConns:          200,
-			MaxIdleConnsPerHost:   64,
-			IdleConnTimeout:       90 * time.Second,
-			ResponseHeaderTimeout: 10 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-		}
+		proxy.Transport = sharedTransport
 		proxy.FlushInterval = 50 * time.Millisecond
+		svcName := svc.Name // capture for closure
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 			status := http.StatusServiceUnavailable
 			if isTimeoutError(err) || errors.Is(err, context.DeadlineExceeded) {
@@ -83,6 +109,9 @@ func NewHandler(cfg *config.Config, logger *slog.Logger) (http.Handler, error) {
 				"path", r.URL.Path,
 				"method", r.Method,
 			)
+			if gm != nil {
+				gm.UpstreamErrors.WithLabelValues(svcName).Inc()
+			}
 			response.Error(w, status, "upstream unavailable")
 		}
 
@@ -94,11 +123,14 @@ func NewHandler(cfg *config.Config, logger *slog.Logger) (http.Handler, error) {
 		}
 
 		routes = append(routes, routeProxy{
-			name:        svc.Name,
-			prefix:      svc.Prefix,
-			proxy:       proxy,
-			skipAuth:    svc.IsAuthSkipped(),
-			tenantAware: svc.IsTenantAware(),
+			name:         svc.Name,
+			prefix:       svc.Prefix,
+			proxy:        proxy,
+			skipAuth:     svc.IsAuthSkipped(),
+			tenantAware:  svc.IsTenantAware(),
+			timeout:      svc.Timeout,
+			maxBodySize:  svc.MaxBodySize,
+			rateLimitRPM: svc.EffectiveRPM(cfg.RateLimit.DefaultRPM),
 		})
 	}
 
@@ -106,10 +138,18 @@ func NewHandler(cfg *config.Config, logger *slog.Logger) (http.Handler, error) {
 		return len(routes[i].prefix) > len(routes[j].prefix)
 	})
 
+	// Build allowlist of known service names for metrics label validation.
+	knownServices := make([]string, 0, len(routes))
+	for _, r := range routes {
+		knownServices = append(knownServices, r.name)
+	}
+
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
+	router.Use(middleware.Metrics(gm, knownServices))
 	router.Use(middleware.Recovery(logger))
 	router.Use(middleware.Logging(logger))
+	router.Use(middleware.CORS(cfg.CORS))
 
 	router.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		response.JSON(w, http.StatusOK, healthBody{
@@ -118,12 +158,36 @@ func NewHandler(cfg *config.Config, logger *slog.Logger) (http.Handler, error) {
 		})
 	})
 
-	router.Get("/ready", func(w http.ResponseWriter, _ *http.Request) {
+	router.Get("/ready", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+
+		for _, host := range targetHosts {
+			var d net.Dialer
+			conn, err := d.DialContext(ctx, "tcp", host)
+			if err != nil {
+				logger.Warn("readiness check failed", "host", host, "error", err)
+				response.Error(w, http.StatusServiceUnavailable, "backend unreachable")
+				return
+			}
+			conn.Close()
+		}
+		if limiter != nil {
+			if err := limiter.Ping(ctx); err != nil {
+				logger.Warn("readiness check failed: redis", "error", err)
+				response.Error(w, http.StatusServiceUnavailable, "redis unreachable")
+				return
+			}
+		}
 		response.JSON(w, http.StatusOK, healthBody{
 			Status:  "ok",
 			Service: "api-gateway",
 		})
 	})
+
+	if cfg.Metrics.IsEnabled() && deps.Registry != nil {
+		router.Get(cfg.Metrics.EffectivePath(), promhttp.HandlerFor(deps.Registry, promhttp.HandlerOpts{}).ServeHTTP)
+	}
 
 	router.HandleFunc("/*", func(w http.ResponseWriter, r *http.Request) {
 		clientIP := resolveClientIP(r, trustedProxies)
@@ -134,7 +198,16 @@ func NewHandler(cfg *config.Config, logger *slog.Logger) (http.Handler, error) {
 
 		for _, route := range routes {
 			if matchesPrefix(r.URL.Path, route.prefix) {
-				if !prepareRouteRequest(w, r, route, authVerifier, tenantResolver) {
+				if route.maxBodySize > 0 {
+					r.Body = http.MaxBytesReader(w, r.Body, route.maxBodySize)
+				}
+				if route.timeout > 0 {
+					ctx, cancel := context.WithTimeout(r.Context(), route.timeout)
+					defer cancel()
+					r = r.WithContext(ctx)
+				}
+
+				if !prepareRouteRequest(w, r, route, authVerifier, tenantResolver, limiter, clientIP) {
 					return
 				}
 
@@ -171,6 +244,8 @@ func prepareRouteRequest(
 	route routeProxy,
 	authVerifier *auth.Verifier,
 	tenantResolver *tenant.Resolver,
+	limiter *ratelimit.Limiter,
+	clientIP string,
 ) bool {
 	stripIdentityHeaders(r.Header)
 
@@ -183,6 +258,30 @@ func prepareRouteRequest(
 		}
 		resolvedTenantID = tenantID
 		r.Header.Set("X-Tenant-ID", tenantID)
+	}
+
+	// Rate limit check: runs after tenant resolution so tenant-aware routes
+	// can use tenantID as part of the key instead of client IP.
+	if limiter != nil && route.rateLimitRPM > 0 {
+		rlKey := clientIP + ":" + route.prefix
+		if route.tenantAware && resolvedTenantID != "" {
+			rlKey = resolvedTenantID + ":" + route.prefix
+		}
+		result, rlErr := limiter.Allow(r.Context(), rlKey, route.rateLimitRPM)
+		if rlErr != nil {
+			// Limiter handles fail-open internally: if fail-open is enabled,
+			// result.Allowed is true and rlErr is nil. An error here means
+			// fail-closed mode with Redis unavailable.
+			response.Error(w, http.StatusServiceUnavailable, "rate limiter unavailable")
+			return false
+		}
+		w.Header().Set("X-RateLimit-Limit", strconv.Itoa(result.Limit))
+		w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(result.Remaining))
+		w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(result.ResetAt.Unix(), 10))
+		if !result.Allowed {
+			response.Error(w, http.StatusTooManyRequests, fmt.Sprintf("rate limit exceeded (%d rpm)", result.Limit))
+			return false
+		}
 	}
 
 	if route.skipAuth {
@@ -228,6 +327,7 @@ func stripIdentityHeaders(headers http.Header) {
 	headers.Del("X-User-ID")
 	headers.Del("X-Tenant-ID")
 	headers.Del("X-User-Roles")
+	headers.Del("X-Gateway-Service")
 }
 
 func isWebSocketUpgrade(r *http.Request) bool {
@@ -281,6 +381,16 @@ func parseRemoteIP(remoteAddr string) string {
 		return ""
 	}
 	return addr.Unmap().String()
+}
+
+func hostWithPort(u *url.URL) string {
+	if u.Port() != "" {
+		return u.Host
+	}
+	if u.Scheme == "https" {
+		return u.Host + ":443"
+	}
+	return u.Host + ":80"
 }
 
 func isTrustedProxy(ip string, trustedProxies []netip.Prefix) bool {

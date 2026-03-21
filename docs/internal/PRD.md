@@ -510,6 +510,19 @@ tenant:
   strategy: "subdomain"          # enum: subdomain | header | path
   header_name: "X-Tenant-ID"    # string — header name when strategy = header
 
+cors:
+  allowed_origins: []            # list[string] — origins permitted to make cross-origin requests; empty disables CORS; ["*"] allows all
+  allowed_methods:               # list[string] — HTTP methods allowed in preflight (defaults: GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD)
+    - "GET"
+    - "POST"
+  allowed_headers:               # list[string] — headers the client may send (defaults: Authorization, Content-Type, X-Request-ID, X-Tenant-ID)
+    - "Authorization"
+    - "Content-Type"
+  exposed_headers:               # list[string] — headers the browser may read from the response (default: X-Request-ID)
+    - "X-Request-ID"
+  allow_credentials: false       # bool — whether to send Access-Control-Allow-Credentials: true
+  max_age: 86400                 # int — preflight cache duration in seconds (default: 86400)
+
 services:
   - name: ""                     # string — human-readable service name (used in logs/metrics)
     prefix: ""                   # string — URL path prefix to match (e.g. /api/v1/auth)
@@ -534,17 +547,19 @@ The gateway expects JWT tokens to carry the following claims:
 
 ```json
 {
-  "user_id":   "string — internal user identifier",
-  "tenant_id": "string — tenant the user belongs to",
-  "roles":     ["string — array of role strings"],
-  "iss":       "string — must match jwt.issuer in config",
-  "sub":       "string — subject (usually same as user_id)",
-  "iat":       "integer — issued at (Unix timestamp)",
-  "exp":       "integer — expiry (Unix timestamp)"
+  "user_id":   "string (required) — internal user identifier",
+  "tenant_id": "string (optional) — tenant the user belongs to; only validated when the matched route has tenant_aware: true (see FR-A10)",
+  "roles":     ["string (optional) — array of role strings"],
+  "iss":       "string (required) — must match jwt.issuer in config",
+  "sub":       "string (optional) — subject (usually same as user_id)",
+  "iat":       "integer (recommended) — issued at (Unix timestamp)",
+  "exp":       "integer (required) — expiry (Unix timestamp)"
 }
 ```
 
 The following standard claims are validated: `exp` (must not be expired), `iss` (must match configured issuer). When multiple keys are configured, `kid` is used to select the verification key. The `roles` claim is forwarded as a comma-separated string in `X-User-Roles`.
+
+**`tenant_id` validation rules:** The `tenant_id` claim is optional in the token. It is only enforced when the matched service route has `tenant_aware: true` configured. In that case, the gateway resolves the tenant from the request (via subdomain, header, or path strategy) and compares it against the JWT `tenant_id` claim — a mismatch returns HTTP 403. For non-tenant-aware routes, `tenant_id` is forwarded as `X-Tenant-ID` if present but not validated.
 
 ### 10.3 Rate Limit Redis Key Schema
 
@@ -1161,7 +1176,6 @@ Optional mode to act as a GraphQL federated gateway, stitching together subgraph
 | **Graceful Shutdown** | A process shutdown strategy that allows in-flight requests to complete before the process exits. |
 | **Fail Open** | A resilience strategy where a system allows requests through when a dependency (e.g. Redis) is unavailable, rather than rejecting all traffic. |
 | **RPM** | Requests Per Minute — the unit used to configure rate limits in GoGate. |
-| **DXA** | Document eXchange Architecture units used in DOCX formatting (1440 DXA = 1 inch). |
 | **CORS** | Cross-Origin Resource Sharing — a browser security policy controlling which origins can make requests to a given domain. |
 | **p50 / p95 / p99** | Percentile latency metrics. p99 = 99% of requests complete within this duration. |
 

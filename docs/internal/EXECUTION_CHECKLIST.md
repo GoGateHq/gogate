@@ -29,18 +29,18 @@ Owner roles:
 
 ## Week 2 (Mar 30 - Apr 3): Authentication and Tenancy
 
-W2 completion rule: W2 checkboxes remain unchecked until **W1-08 (Gate A)** is signed off and test status is recorded as PASS.
+W2 completion rule: Checkboxes indicate Gate A approval (W1-08). Tests should be recorded in "Test Status" when run; "Gate Approved" tracks whether W1-08 has been signed off.
 
-| Done | ID | Task | Owner | Acceptance Test | Test Status |
-|---|---|---|---|---|---|
-| [ ] | W2-01 | Implement JWT verification middleware with supported alg list | BE + SEC | Valid token passes; expired/invalid token returns 401 | PASS (local tests) - blocked pending W1-08 |
-| [ ] | W2-02 | Implement keyset-based validation (`kid`) | BE + SEC | Tokens signed by old and new active keys both validate during rotation window | PASS (local tests) - blocked pending W1-08 |
-| [ ] | W2-03 | Implement optional JWKS fetch + cache TTL | BE | JWKS-backed token validates; stale cache refreshes on TTL expiry | PASS (local tests) - blocked pending W1-08 |
-| [ ] | W2-04 | Implement tenant resolvers (subdomain/header/path) | BE | Unit tests cover valid and invalid cases for all 3 strategies | PASS (local tests) - blocked pending W1-08 |
-| [ ] | W2-05 | Enforce tenant match (`resolved tenant == JWT tenant_id`) | BE + SEC | Mismatch returns 403 before proxying | PASS (mismatch returns 403) - blocked pending W1-08 |
-| [ ] | W2-06 | Strip spoofed identity headers and re-inject canonical headers | BE + SEC | Client `X-User-ID`/`X-Tenant-ID` values never reach upstream unchanged | PASS (spoofed headers stripped) - blocked pending W1-08 |
-| [ ] | W2-07 | Add trusted proxy handling for `X-Forwarded-For`/`X-Real-IP` | BE + SEC | Untrusted hop cannot spoof client IP; trusted hop can forward expected value | PASS (trusted/untrusted proxy tests) - blocked pending W1-08 |
-| [ ] | W2-08 | Gate B signoff | PM + QA + SEC | Auth and tenant enforcement tests pass in CI and staging |
+| Done | ID | Task | Owner | Acceptance Test | Test Status | Gate Approved |
+|---|---|---|---|---|---|---|
+| [ ] | W2-01 | Implement JWT verification middleware with supported alg list | BE + SEC | Valid token passes; expired/invalid token returns 401 | PASS (local tests) | Pending W1-08 |
+| [ ] | W2-02 | Implement keyset-based validation (`kid`) | BE + SEC | Tokens signed by old and new active keys both validate during rotation window | PASS (local tests) | Pending W1-08 |
+| [ ] | W2-03 | Implement optional JWKS fetch + cache TTL | BE | JWKS-backed token validates; stale cache refreshes on TTL expiry | PASS (local tests) | Pending W1-08 |
+| [ ] | W2-04 | Implement tenant resolvers (subdomain/header/path) | BE | Unit tests cover valid and invalid cases for all 3 strategies | PASS (local tests) | Pending W1-08 |
+| [ ] | W2-05 | Enforce tenant match (`resolved tenant == JWT tenant_id`) | BE + SEC | Mismatch returns 403 before proxying | PASS (local tests) | Pending W1-08 |
+| [ ] | W2-06 | Strip spoofed identity headers and re-inject canonical headers | BE + SEC | Client `X-User-ID`/`X-Tenant-ID` values never reach upstream unchanged | PASS (local tests) | Pending W1-08 |
+| [ ] | W2-07 | Add trusted proxy handling for `X-Forwarded-For`/`X-Real-IP` | BE + SEC | Untrusted hop cannot spoof client IP; trusted hop can forward expected value | PASS (local tests) | Pending W1-08 |
+| [ ] | W2-08 | Gate B signoff | PM + QA + SEC | Auth and tenant enforcement tests pass in CI and staging | | |
 
 ---
 

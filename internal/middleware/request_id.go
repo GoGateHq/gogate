@@ -6,6 +6,7 @@ package middleware
 import (
 	"context"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -15,10 +16,17 @@ import (
 
 const requestIDHeader = "X-Request-ID"
 
+// maxRequestIDLen prevents clients from sending arbitrarily long request IDs.
+const maxRequestIDLen = 128
+
+// requestIDPattern validates that a client-supplied request ID contains only
+// safe characters (alphanumeric, hyphens, and underscores).
+var requestIDPattern = regexp.MustCompile(`^[a-zA-Z0-9\-_]{1,128}$`)
+
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestID := strings.TrimSpace(r.Header.Get(requestIDHeader))
-		if requestID == "" {
+		if requestID == "" || len(requestID) > maxRequestIDLen || !requestIDPattern.MatchString(requestID) {
 			requestID = uuid.NewString()
 		}
 

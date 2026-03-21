@@ -29,6 +29,29 @@ tenant:
     - api
     - admin
 
+cors:
+  allowed_origins: []
+  # allowed_origins:
+  #   - https://app.example.com
+  #   - https://admin.example.com
+  # Use ["*"] to allow all origins (not recommended for production).
+  # When allowed_origins is empty, CORS handling is disabled.
+
+# Redis is required when rate limiting is enabled.
+# redis:
+#   addr: localhost:6379
+#   password: ${REDIS_PASSWORD}
+#   db: 0
+
+# rate_limit:
+#   default_rpm: 60
+#   fail_open: true
+#   key_prefix: "gogate:rl:"
+
+# metrics:
+#   enabled: true
+#   path: /metrics
+
 services:
   - name: auth-service
     prefix: /api/v1/auth

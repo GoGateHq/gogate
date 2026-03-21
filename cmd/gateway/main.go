@@ -7,23 +7,43 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/gogatehq/gogate/internal/config"
 	"github.com/gogatehq/gogate/internal/gateway"
+	"github.com/gogatehq/gogate/internal/metrics"
+	"github.com/gogatehq/gogate/internal/ratelimit"
+)
+
+// Set via -ldflags at build time.
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
 )
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
+	showVersion := false
 	configPath := defaultConfigPath()
 	flag.StringVar(&configPath, "config", configPath, "path to gateway config yaml")
+	flag.BoolVar(&showVersion, "version", false, "print version and exit")
 	flag.Parse()
+
+	if showVersion {
+		fmt.Printf("gogate %s (commit=%s, built=%s)\n", version, commit, date)
+		os.Exit(0)
+	}
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
@@ -31,7 +51,31 @@ func main() {
 		os.Exit(1)
 	}
 
-	handler, err := gateway.NewHandler(cfg, logger)
+	deps := &gateway.HandlerDeps{}
+
+	// Rate limiter (optional).
+	if strings.TrimSpace(cfg.Redis.Addr) != "" {
+		limiter, err := ratelimit.NewLimiter(cfg.Redis, cfg.RateLimit, logger)
+		if err != nil {
+			logger.Error("failed to connect to redis", "error", err)
+			os.Exit(1)
+		}
+		deps.Limiter = limiter
+		defer limiter.Close()
+		logger.Info("rate limiter enabled", "redis", cfg.Redis.Addr, "default_rpm", cfg.RateLimit.DefaultRPM)
+	}
+
+	// Prometheus metrics (optional).
+	if cfg.Metrics.IsEnabled() {
+		registry := prometheus.NewRegistry()
+		registry.MustRegister(prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
+		registry.MustRegister(prometheus.NewGoCollector())
+		deps.Metrics = metrics.New(registry)
+		deps.Registry = registry
+		logger.Info("metrics enabled", "path", cfg.Metrics.EffectivePath())
+	}
+
+	handler, err := gateway.NewHandler(cfg, logger, deps)
 	if err != nil {
 		logger.Error("failed to build gateway handler", "error", err)
 		os.Exit(1)
@@ -47,7 +91,7 @@ func main() {
 
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("gateway started", "addr", server.Addr)
+		logger.Info("gateway started", "addr", server.Addr, "version", version)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("gateway server crashed", "error", err)
 			errCh <- err

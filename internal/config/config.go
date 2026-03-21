@@ -19,11 +19,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var tenantIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9\-]{2,62}$`)
+
 type Config struct {
-	Server   ServerConfig    `yaml:"server"`
-	JWT      JWTConfig       `yaml:"jwt"`
-	Tenant   TenantConfig    `yaml:"tenant"`
-	Services []ServiceConfig `yaml:"services"`
+	Server    ServerConfig    `yaml:"server"`
+	JWT       JWTConfig       `yaml:"jwt"`
+	Tenant    TenantConfig    `yaml:"tenant"`
+	CORS      CORSConfig      `yaml:"cors"`
+	Redis     RedisConfig     `yaml:"redis"`
+	RateLimit RateLimitConfig `yaml:"rate_limit"`
+	Metrics   MetricsConfig   `yaml:"metrics"`
+	Services  []ServiceConfig `yaml:"services"`
 }
 
 type ServerConfig struct {
@@ -35,11 +41,62 @@ type ServerConfig struct {
 }
 
 type ServiceConfig struct {
-	Name        string `yaml:"name"`
-	Prefix      string `yaml:"prefix"`
-	Target      string `yaml:"target"`
-	SkipAuth    *bool  `yaml:"skip_auth"`
-	TenantAware *bool  `yaml:"tenant_aware"`
+	Name         string        `yaml:"name"`
+	Prefix       string        `yaml:"prefix"`
+	Target       string        `yaml:"target"`
+	SkipAuth     *bool         `yaml:"skip_auth"`
+	TenantAware  *bool         `yaml:"tenant_aware"`
+	Timeout      time.Duration `yaml:"timeout"`
+	MaxBodySize  int64         `yaml:"max_body_size"`
+	RateLimitRPM *int          `yaml:"rate_limit_rpm"`
+}
+
+type RedisConfig struct {
+	Addr         string        `yaml:"addr"`
+	Password     string        `yaml:"password"`
+	DB           int           `yaml:"db"`
+	DialTimeout  time.Duration `yaml:"dial_timeout"`
+	ReadTimeout  time.Duration `yaml:"read_timeout"`
+	WriteTimeout time.Duration `yaml:"write_timeout"`
+}
+
+type RateLimitConfig struct {
+	DefaultRPM int    `yaml:"default_rpm"`
+	FailOpen   *bool  `yaml:"fail_open"`
+	KeyPrefix  string `yaml:"key_prefix"`
+}
+
+type MetricsConfig struct {
+	Enabled *bool  `yaml:"enabled"`
+	Path    string `yaml:"path"`
+}
+
+func (r RateLimitConfig) IsFailOpen() bool {
+	if r.FailOpen == nil {
+		return true
+	}
+	return *r.FailOpen
+}
+
+func (m MetricsConfig) IsEnabled() bool {
+	if m.Enabled == nil {
+		return false
+	}
+	return *m.Enabled
+}
+
+func (m MetricsConfig) EffectivePath() string {
+	if strings.TrimSpace(m.Path) == "" {
+		return "/metrics"
+	}
+	return m.Path
+}
+
+func (s ServiceConfig) EffectiveRPM(fallback int) int {
+	if s.RateLimitRPM != nil {
+		return *s.RateLimitRPM
+	}
+	return fallback
 }
 
 type JWTConfig struct {
@@ -65,14 +122,23 @@ type TenantConfig struct {
 	ReservedSubdomains []string `yaml:"reserved_subdomains"`
 }
 
+type CORSConfig struct {
+	AllowedOrigins   []string `yaml:"allowed_origins"`
+	AllowedMethods   []string `yaml:"allowed_methods"`
+	AllowedHeaders   []string `yaml:"allowed_headers"`
+	ExposedHeaders   []string `yaml:"exposed_headers"`
+	AllowCredentials bool     `yaml:"allow_credentials"`
+	MaxAge           int      `yaml:"max_age"`
+}
+
 func (s ServerConfig) ListenAddr() string {
 	return fmt.Sprintf(":%d", s.Port)
 }
 
 func (s ServiceConfig) IsAuthSkipped() bool {
-	// Keep v1 behavior by defaulting to skip auth when field is omitted.
+	// Secure default: require auth when field is omitted.
 	if s.SkipAuth == nil {
-		return true
+		return false
 	}
 	return *s.SkipAuth
 }
@@ -142,6 +208,35 @@ func (c *Config) applyDefaults() {
 	if len(c.Tenant.ReservedSubdomains) == 0 {
 		c.Tenant.ReservedSubdomains = []string{"www", "api", "admin"}
 	}
+	if c.Redis.DialTimeout == 0 {
+		c.Redis.DialTimeout = 5 * time.Second
+	}
+	if c.Redis.ReadTimeout == 0 {
+		c.Redis.ReadTimeout = 3 * time.Second
+	}
+	if c.Redis.WriteTimeout == 0 {
+		c.Redis.WriteTimeout = 3 * time.Second
+	}
+	if strings.TrimSpace(c.RateLimit.KeyPrefix) == "" {
+		c.RateLimit.KeyPrefix = "gogate:rl:"
+	}
+	if strings.TrimSpace(c.Metrics.Path) == "" {
+		c.Metrics.Path = "/metrics"
+	}
+	if len(c.CORS.AllowedOrigins) > 0 {
+		if len(c.CORS.AllowedMethods) == 0 {
+			c.CORS.AllowedMethods = []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"}
+		}
+		if len(c.CORS.AllowedHeaders) == 0 {
+			c.CORS.AllowedHeaders = []string{"Authorization", "Content-Type", "X-Request-ID", "X-Tenant-ID"}
+		}
+		if len(c.CORS.ExposedHeaders) == 0 {
+			c.CORS.ExposedHeaders = []string{"X-Request-ID"}
+		}
+		if c.CORS.MaxAge == 0 {
+			c.CORS.MaxAge = 86400
+		}
+	}
 	for i := range c.JWT.Keys {
 		if strings.TrimSpace(c.JWT.Keys[i].KTY) == "" {
 			c.JWT.Keys[i].KTY = "oct"
@@ -163,6 +258,9 @@ func (c *Config) Validate() error {
 	}
 
 	reserved := []string{"/health", "/ready"}
+	if c.Metrics.IsEnabled() {
+		reserved = append(reserved, c.Metrics.EffectivePath())
+	}
 	seenPrefixes := make(map[string]struct{}, len(c.Services))
 
 	for i, svc := range c.Services {
@@ -204,6 +302,16 @@ func (c *Config) Validate() error {
 			}
 		}
 
+		if svc.Timeout < 0 {
+			return fmt.Errorf("%s.timeout must not be negative", indexLabel)
+		}
+		if svc.MaxBodySize < 0 {
+			return fmt.Errorf("%s.max_body_size must not be negative", indexLabel)
+		}
+		if svc.RateLimitRPM != nil && *svc.RateLimitRPM < 0 {
+			return fmt.Errorf("%s.rate_limit_rpm must not be negative", indexLabel)
+		}
+
 		if svc.IsTenantAware() && c.Tenant.Strategy == "header" && strings.TrimSpace(c.Tenant.HeaderName) == "" {
 			return errors.New("tenant.header_name is required when tenant.strategy=header and tenant_aware routes exist")
 		}
@@ -217,6 +325,12 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if err := c.validateTenant(); err != nil {
+		return err
+	}
+	if err := c.validateRateLimit(); err != nil {
+		return err
+	}
+	if err := c.validateMetrics(); err != nil {
 		return err
 	}
 
@@ -308,12 +422,44 @@ func (c *Config) validateTenant() error {
 		}
 	}
 
-	tenantPattern := regexp.MustCompile(`^[a-z0-9][a-z0-9\-]{2,62}$`)
 	for _, reserved := range c.Tenant.ReservedSubdomains {
-		if !tenantPattern.MatchString(strings.ToLower(strings.TrimSpace(reserved))) {
+		if !tenantIDPattern.MatchString(strings.ToLower(strings.TrimSpace(reserved))) {
 			return fmt.Errorf("tenant.reserved_subdomains contains invalid value %q", reserved)
 		}
 	}
 
+	return nil
+}
+
+func (c *Config) requiresRateLimit() bool {
+	if c.RateLimit.DefaultRPM > 0 {
+		return true
+	}
+	for _, svc := range c.Services {
+		if svc.RateLimitRPM != nil && *svc.RateLimitRPM > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Config) validateRateLimit() error {
+	if c.RateLimit.DefaultRPM < 0 {
+		return errors.New("rate_limit.default_rpm must not be negative")
+	}
+	if c.requiresRateLimit() && strings.TrimSpace(c.Redis.Addr) == "" {
+		return errors.New("redis.addr is required when rate limiting is enabled")
+	}
+	return nil
+}
+
+func (c *Config) validateMetrics() error {
+	if !c.Metrics.IsEnabled() {
+		return nil
+	}
+	path := c.Metrics.EffectivePath()
+	if !strings.HasPrefix(path, "/") {
+		return errors.New("metrics.path must start with '/'")
+	}
 	return nil
 }

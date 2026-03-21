@@ -4,7 +4,10 @@
 package middleware
 
 import (
+	"bufio"
+	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 )
@@ -29,6 +32,26 @@ func (s *statusRecorder) Write(data []byte) (int, error) {
 	return n, err
 }
 
+// Unwrap exposes the underlying ResponseWriter for http.ResponseController.
+func (s *statusRecorder) Unwrap() http.ResponseWriter {
+	return s.ResponseWriter
+}
+
+// Flush implements http.Flusher so SSE and chunked responses work through the gateway.
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Hijack implements http.Hijacker so WebSocket upgrades work through the gateway.
+func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := s.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, errors.New("hijack not supported")
+}
+
 func Logging(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -41,10 +64,16 @@ func Logging(logger *slog.Logger) func(http.Handler) http.Handler {
 				recorder.status = http.StatusOK
 			}
 
+			service := r.Header.Get("X-Gateway-Service")
+			if service == "" {
+				service = "-"
+			}
+
 			logger.Info("request completed",
 				"request_id", RequestIDFromContext(r.Context()),
 				"method", r.Method,
 				"path", r.URL.Path,
+				"service", service,
 				"status", recorder.status,
 				"bytes", recorder.bytes,
 				"latency_ms", time.Since(start).Milliseconds(),

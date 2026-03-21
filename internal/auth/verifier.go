@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/gogatehq/gogate/internal/config"
@@ -50,6 +52,7 @@ type keyStore struct {
 	mu            sync.RWMutex
 	cachedJWKS    map[string][]byte
 	jwksExpiresAt time.Time
+	fetchGroup    singleflight.Group
 }
 
 func NewVerifier(cfg config.JWTConfig) *Verifier {
@@ -192,6 +195,7 @@ func (k *keyStore) allJWKS(ctx context.Context) map[string][]byte {
 		return nil
 	}
 
+	// Fast path: return cached keys if still valid.
 	k.mu.RLock()
 	if time.Now().Before(k.jwksExpiresAt) && len(k.cachedJWKS) > 0 {
 		defer k.mu.RUnlock()
@@ -199,13 +203,20 @@ func (k *keyStore) allJWKS(ctx context.Context) map[string][]byte {
 	}
 	k.mu.RUnlock()
 
-	keys, err := k.fetchJWKS(ctx)
+	// Use singleflight to coalesce concurrent fetches: only one goroutine
+	// performs the HTTP call; all others wait and share the result.
+	result, err, _ := k.fetchGroup.Do("jwks", func() (any, error) {
+		return k.fetchJWKS(ctx)
+	})
+
 	if err != nil {
+		// Fetch failed — return stale cache if available.
 		k.mu.RLock()
 		defer k.mu.RUnlock()
 		return copyKeyMap(k.cachedJWKS)
 	}
 
+	keys := result.(map[string][]byte)
 	k.mu.Lock()
 	k.cachedJWKS = keys
 	k.jwksExpiresAt = time.Now().Add(k.cacheTTL)
