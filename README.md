@@ -14,6 +14,12 @@ Requirements:
 
 - Go 1.22+
 
+Optional local env file:
+
+```bash
+cp .env.example .env
+```
+
 Run locally:
 
 ```bash
@@ -39,6 +45,12 @@ make test
 - Product requirements: [PRD.md](./PRD.md)
 - Changelog: [CHANGELOG.md](./CHANGELOG.md)
 - Repo setup checklist: [docs/REPO_SETUP.md](./docs/REPO_SETUP.md)
+
+## Secrets and Key Management
+
+- Do not commit real signing secrets to `config.yaml`.
+- Use environment variable substitution in config values (for example `${JWT_SIGNING_KEY}`).
+- For production deployments, prefer asymmetric signing (RS256/ES256) with public-key/JWKS distribution over shared HMAC secrets.
 
 ## Compatibility
 

@@ -1,6 +1,6 @@
 # Binaries
 bin/
-gateway
+/gateway
 
 # Go artifacts
 *.test
@@ -20,4 +20,3 @@ cover.out
 # OS files
 .DS_Store
 Thumbs.db
-

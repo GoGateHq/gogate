@@ -3,12 +3,40 @@ server:
   read_timeout: 30s
   write_timeout: 30s
   idle_timeout: 120s
+  trusted_proxies:
+    - 127.0.0.0/8
+    - ::1/128
+
+jwt:
+  issuer: api-gateway
+  algorithms:
+    - HS256
+  clock_skew: 30s
+  # For auth-protected routes, provide one or more signing keys from environment:
+  # keys:
+  #   - kid: primary
+  #     kty: oct
+  #     value: ${JWT_SIGNING_KEY}
+  #     primary: true
+  # Consider RS256/ES256 + JWKS for production to avoid distributing shared secrets.
+
+tenant:
+  strategy: subdomain
+  header_name: X-Tenant-ID
+  path_prefix: /t/
+  reserved_subdomains:
+    - www
+    - api
+    - admin
 
 services:
   - name: auth-service
     prefix: /api/v1/auth
     target: http://localhost:8081
+    skip_auth: true
+    tenant_aware: false
   - name: school-service
     prefix: /api/v1/schools
     target: http://localhost:8082
-
+    skip_auth: true
+    tenant_aware: false

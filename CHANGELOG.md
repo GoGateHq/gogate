@@ -20,3 +20,6 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 ### Added
 - Initial gateway scaffold with routing, middleware, health/readiness endpoints, config validation, tests, and CI.
 - Open-source governance/legal files (license, contribution, security, support, CLA, trademark policy).
+- JWT verification with `kid` key selection, multi-key rotation, and optional JWKS-backed key lookup.
+- Tenant resolution strategies (subdomain, header, path) with tenant-aware route enforcement.
+- Trusted proxy client-IP resolution and spoofed identity header stripping before upstream forwarding.

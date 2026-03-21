@@ -103,6 +103,124 @@ server:
 	}
 }
 
+func TestLoadFailsOnInvalidTrustedProxyCIDR(t *testing.T) {
+	t.Parallel()
+
+	path := writeTempConfig(t, `
+server:
+  port: 8080
+  trusted_proxies:
+    - invalid-cidr
+`)
+
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "trusted_proxies") {
+		t.Fatalf("expected trusted_proxies validation error, got: %v", err)
+	}
+}
+
+func TestLoadFailsOnInvalidTenantStrategy(t *testing.T) {
+	t.Parallel()
+
+	path := writeTempConfig(t, `
+server:
+  port: 8080
+tenant:
+  strategy: unknown
+`)
+
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "tenant.strategy") {
+		t.Fatalf("expected tenant.strategy validation error, got: %v", err)
+	}
+}
+
+func TestLoadFailsOnUnsupportedJWTAlgorithm(t *testing.T) {
+	t.Parallel()
+
+	path := writeTempConfig(t, `
+server:
+  port: 8080
+jwt:
+  algorithms:
+    - HS512
+`)
+
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "jwt.algorithms") {
+		t.Fatalf("expected jwt.algorithms validation error, got: %v", err)
+	}
+}
+
+func TestLoadFailsWhenHeaderStrategyHasNoHeaderName(t *testing.T) {
+	t.Parallel()
+
+	path := writeTempConfig(t, `
+server:
+  port: 8080
+tenant:
+  strategy: header
+`)
+
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "tenant.header_name") {
+		t.Fatalf("expected tenant.header_name validation error, got: %v", err)
+	}
+}
+
+func TestLoadDefaultsJWTKeyTypeToOct(t *testing.T) {
+	t.Parallel()
+
+	path := writeTempConfig(t, `
+server:
+  port: 8080
+jwt:
+  keys:
+    - kid: k1
+      value: abc12345678901234567890123456789
+      primary: true
+services:
+  - name: auth
+    prefix: /api/v1/auth
+    target: http://localhost:8081
+    skip_auth: false
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("expected valid config, got: %v", err)
+	}
+	if cfg.JWT.Keys[0].KTY != "oct" {
+		t.Fatalf("expected KTY to default to oct, got %q", cfg.JWT.Keys[0].KTY)
+	}
+}
+
+func TestLoadExpandsEnvironmentVariables(t *testing.T) {
+	t.Setenv("JWT_SIGNING_KEY", "env-secret-1234567890123456789012345678")
+	path := writeTempConfig(t, `
+server:
+  port: 8080
+jwt:
+  keys:
+    - kid: k1
+      value: ${JWT_SIGNING_KEY}
+      primary: true
+services:
+  - name: auth
+    prefix: /api/v1/auth
+    target: http://localhost:8081
+    skip_auth: false
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("expected env-expanded config to load, got: %v", err)
+	}
+	if got := cfg.JWT.Keys[0].Value; got != "env-secret-1234567890123456789012345678" {
+		t.Fatalf("expected expanded env value, got %q", got)
+	}
+}
+
 func writeTempConfig(t *testing.T, contents string) string {
 	t.Helper()
 
