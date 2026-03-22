@@ -45,6 +45,7 @@ type routeProxy struct {
 	proxy        *httputil.ReverseProxy
 	skipAuth     bool
 	tenantAware  bool
+	stripPrefix  bool
 	timeout      time.Duration
 	maxBodySize  int64
 	rateLimitRPM int
@@ -128,6 +129,7 @@ func NewHandler(cfg *config.Config, logger *slog.Logger, deps *HandlerDeps) (htt
 			proxy:        proxy,
 			skipAuth:     svc.IsAuthSkipped(),
 			tenantAware:  svc.IsTenantAware(),
+			stripPrefix:  svc.IsPrefixStripped(),
 			timeout:      svc.Timeout,
 			maxBodySize:  svc.MaxBodySize,
 			rateLimitRPM: svc.EffectiveRPM(cfg.RateLimit.DefaultRPM),
@@ -213,6 +215,27 @@ func NewHandler(cfg *config.Config, logger *slog.Logger, deps *HandlerDeps) (htt
 				}
 
 				r.Header.Set("X-Gateway-Service", route.name)
+
+				// Strip the matched prefix so the upstream receives a
+				// clean path (e.g. /api/v1/auth/login -> /login).
+				if route.stripPrefix {
+					stripped := strings.TrimPrefix(r.URL.Path, route.prefix)
+					if stripped == "" || stripped[0] != '/' {
+						stripped = "/" + stripped
+					}
+					r.URL.Path = stripped
+
+					// Preserve percent-encoding: apply the same trim to
+					// RawPath when it exists, otherwise leave it empty.
+					if r.URL.RawPath != "" {
+						rawStripped := strings.TrimPrefix(r.URL.RawPath, route.prefix)
+						if rawStripped == "" || rawStripped[0] != '/' {
+							rawStripped = "/" + rawStripped
+						}
+						r.URL.RawPath = rawStripped
+					}
+				}
+
 				route.proxy.ServeHTTP(w, r)
 				return
 			}
@@ -313,6 +336,9 @@ func prepareRouteRequest(
 		}
 	}
 
+	// Strip the raw token — upstream receives trusted identity headers instead.
+	stripSensitiveHeaders(r.Header)
+
 	r.Header.Set("X-User-ID", identity.UserID)
 	if len(identity.Roles) > 0 {
 		r.Header.Set("X-User-Roles", strings.Join(identity.Roles, ","))
@@ -329,6 +355,13 @@ func stripIdentityHeaders(headers http.Header) {
 	headers.Del("X-Tenant-ID")
 	headers.Del("X-User-Roles")
 	headers.Del("X-Gateway-Service")
+}
+
+// stripSensitiveHeaders removes headers that upstream services should not
+// receive. The gateway has already validated the JWT and injected trusted
+// identity headers, so the raw Authorization token is no longer needed.
+func stripSensitiveHeaders(headers http.Header) {
+	headers.Del("Authorization")
 }
 
 func isWebSocketUpgrade(r *http.Request) bool {

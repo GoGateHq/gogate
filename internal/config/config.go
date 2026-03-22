@@ -46,6 +46,7 @@ type ServiceConfig struct {
 	Target       string        `yaml:"target"`
 	SkipAuth     *bool         `yaml:"skip_auth"`
 	TenantAware  *bool         `yaml:"tenant_aware"`
+	StripPrefix  *bool         `yaml:"strip_prefix"`
 	Timeout      time.Duration `yaml:"timeout"`
 	MaxBodySize  int64         `yaml:"max_body_size"`
 	RateLimitRPM *int          `yaml:"rate_limit_rpm"`
@@ -148,6 +149,13 @@ func (s ServiceConfig) IsTenantAware() bool {
 		return false
 	}
 	return *s.TenantAware
+}
+
+func (s ServiceConfig) IsPrefixStripped() bool {
+	if s.StripPrefix == nil {
+		return false
+	}
+	return *s.StripPrefix
 }
 
 func Load(path string) (*Config, error) {

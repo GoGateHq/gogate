@@ -26,6 +26,11 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      - name: Check go mod tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
       - name: Vet
         run: go vet ./...
 
@@ -36,10 +41,30 @@ jobs:
         run: go test -race -coverprofile=coverage.out ./...
 
       - name: Build
-        run: go build ./cmd/gateway
+        run: go build -ldflags "-s -w" -o bin/gateway ./cmd/gateway
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
           name: coverage.out
           path: coverage.out
+
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -f deployments/docker/Dockerfile \
+            --build-arg VERSION=$(git describe --tags --always 2>/dev/null || echo dev) \
+            --build-arg COMMIT=$(git rev-parse --short HEAD) \
+            --build-arg BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+            -t gogate:ci \
+            .

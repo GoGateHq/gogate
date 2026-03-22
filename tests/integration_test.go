@@ -518,6 +518,112 @@ func TestGatewayWebSocketUpgradeProxy(t *testing.T) {
 	}
 }
 
+func TestGatewayStripPrefixBeforeForwarding(t *testing.T) {
+	t.Parallel()
+
+	var receivedPath string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(backend.Close)
+
+	handler := mustBuildHandler(t, &config.Config{
+		Server: config.ServerConfig{Port: 8080},
+		Services: []config.ServiceConfig{
+			{Name: "users", Prefix: "/api/v1/users", Target: backend.URL, SkipAuth: boolPtr(true), StripPrefix: boolPtr(true)},
+		},
+	})
+
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	resp := mustDo(t, server.URL+"/api/v1/users/123/profile")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if receivedPath != "/123/profile" {
+		t.Fatalf("expected stripped path /123/profile, got %q", receivedPath)
+	}
+}
+
+func TestGatewayPreservesPrefixByDefault(t *testing.T) {
+	t.Parallel()
+
+	var receivedPath string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(backend.Close)
+
+	handler := mustBuildHandler(t, &config.Config{
+		Server: config.ServerConfig{Port: 8080},
+		Services: []config.ServiceConfig{
+			{Name: "users", Prefix: "/api/v1/users", Target: backend.URL, SkipAuth: boolPtr(true)},
+		},
+	})
+
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	resp := mustDo(t, server.URL+"/api/v1/users/123/profile")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if receivedPath != "/api/v1/users/123/profile" {
+		t.Fatalf("expected full path preserved, got %q", receivedPath)
+	}
+}
+
+func TestGatewayStripsAuthorizationHeaderBeforeForwarding(t *testing.T) {
+	t.Parallel()
+
+	var forwardedAuth string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwardedAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(backend.Close)
+
+	handler := mustBuildHandler(t, &config.Config{
+		Server: config.ServerConfig{Port: 8080},
+		JWT: config.JWTConfig{
+			Issuer:     "api-gateway",
+			Algorithms: []string{"HS256"},
+			Keys: []config.JWTKeyConfig{
+				{KID: "k1", KTY: "oct", Value: "secret-12345678901234567890123456789012", Primary: true},
+			},
+		},
+		Services: []config.ServiceConfig{
+			{Name: "api", Prefix: "/api", Target: backend.URL, SkipAuth: boolPtr(false)},
+		},
+	})
+
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	token := mustSignToken(t, "k1", "secret-12345678901234567890123456789012", "greenfield", time.Now().Add(1*time.Hour))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/api/test", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if forwardedAuth != "" {
+		t.Fatalf("expected Authorization header to be stripped, got %q", forwardedAuth)
+	}
+}
+
 func mustBuildHandler(t *testing.T, cfg *config.Config) http.Handler {
 	t.Helper()
 
