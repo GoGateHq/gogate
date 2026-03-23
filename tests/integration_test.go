@@ -438,9 +438,9 @@ func TestGatewaySecurityHeadersPresent(t *testing.T) {
 
 	expectations := map[string]string{
 		"X-Content-Type-Options": "nosniff",
-		"X-Frame-Options":       "DENY",
-		"X-XSS-Protection":      "0",
-		"Referrer-Policy":       "strict-origin-when-cross-origin",
+		"X-Frame-Options":        "DENY",
+		"X-XSS-Protection":       "0",
+		"Referrer-Policy":        "strict-origin-when-cross-origin",
 	}
 	for header, expected := range expectations {
 		if got := resp.Header.Get(header); got != expected {

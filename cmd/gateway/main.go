@@ -82,11 +82,12 @@ func main() {
 	}
 
 	server := &http.Server{
-		Addr:         cfg.Server.ListenAddr(),
-		Handler:      handler,
-		ReadTimeout:  cfg.Server.ReadTimeout,
-		WriteTimeout: cfg.Server.WriteTimeout,
-		IdleTimeout:  cfg.Server.IdleTimeout,
+		Addr:              cfg.Server.ListenAddr(),
+		Handler:           handler,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		ReadHeaderTimeout: cfg.Server.ReadTimeout,
+		WriteTimeout:      cfg.Server.WriteTimeout,
+		IdleTimeout:       cfg.Server.IdleTimeout,
 	}
 
 	errCh := make(chan error, 1)
