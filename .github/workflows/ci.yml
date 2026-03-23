@@ -44,7 +44,7 @@ jobs:
         run: go build -ldflags "-s -w" -o bin/gateway ./cmd/gateway
 
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage.out
           path: coverage.out
