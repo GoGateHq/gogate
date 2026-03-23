@@ -71,7 +71,7 @@ Before public launch, verify:
 
 - `.github/CODEOWNERS` points to your active maintainer account/team
 - `.github/ISSUE_TEMPLATE/config.yml` points to your live security advisory URL
-- policy/license contact emails are reachable (`support@gogatehq.dev`)
+- policy/license contact emails are reachable (`gogatehq@emmogba.dev`)
 
 ## 8. Release Hygiene
 
