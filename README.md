@@ -12,7 +12,7 @@ Core functionality is being built against the milestones in [ROADMAP.md](./ROADM
 
 Requirements:
 
-- Go 1.22+
+- Go 1.25+
 
 Optional local env file:
 
@@ -67,7 +67,7 @@ GoGate uses a dual-license model.
 - Community use is licensed under **GNU AGPLv3**. See [LICENSE](./LICENSE).
 - Commercial use without AGPL obligations requires a separate license. See [LICENSE-COMMERCIAL.md](./LICENSE-COMMERCIAL.md).
 
-Contact: `gogatehq@emmogba.dev`
+Contact: `gogatehq@gmail.com`
 
 ## Contribution and Governance
 

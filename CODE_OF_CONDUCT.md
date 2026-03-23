@@ -20,4 +20,4 @@ We are committed to a respectful, harassment-free community for everyone.
 
 Project maintainers may remove comments, reject contributions, or ban participants for violations.
 
-Report conduct issues to: `gogatehq@emmogba.dev`
+Report conduct issues to: `gogatehq@gmail.com`

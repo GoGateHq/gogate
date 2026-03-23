@@ -10,7 +10,7 @@ Do not open public issues for sensitive vulnerabilities.
 
 Preferred: submit a private GitHub Security Advisory draft in this repository.
 
-Fallback email: `gogatehq@emmogba.dev`
+Fallback email: `gogatehq@gmail.com`
 
 Please include:
 
